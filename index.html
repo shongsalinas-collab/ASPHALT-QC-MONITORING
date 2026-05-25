@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asphalt QC Monitoring | Big Ben</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/firebase@9.23.0/firebase-app-compat.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@9.23.0/firebase-database-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+@media print {
+  .header-right, .tabs, .log-toolbar .log-controls,
+  .btn-primary, .btn-outline, .btn-danger-sm,
+  .act-btn, .modal-overlay, .toast { display: none !important; }
+  .tab-content { display: block !important; }
+  .table-wrap { max-height: none !important; overflow: visible !important; }
+  .log-tbl { font-size: 9px; }
+  body { background: white; }
+}
+.sheet-badge {
+  font-size: 9px; padding: 2px 7px; border-radius: 6px;
+  font-weight: 600; display: inline-block; margin-left: 4px;
+}
+.result-cell { text-align: center; font-size: 10px; line-height: 1.5; padding: 4px 6px; }
+.result-cell .val { font-weight: 700; font-size: 11px; }
+.result-cell .req { font-size: 9px; color: var(--text-2); }
+.section-label {
+  font-size: 11px; font-weight: 600; color: #8B1A1A;
+  text-transform: uppercase; letter-spacing: .05em;
+  margin: 12px 0 6px; padding-bottom: 4px;
+  border-bottom: 0.5px solid var(--border-strong);
+}
+.spec-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.spec-row label { font-size: 11px; min-width: 120px; color: var(--text-2); }
+.spec-input { display: flex; gap: 6px; }
+.spec-input input { width: 70px; font-size: 11px; padding: 4px 6px;
+  border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <div class="header-left">
+      <img src="logo.png" alt="BB" class="logo-img" onerror="this.style.display='none';document.getElementById('logo-fb').style.display='flex'">
+      <div class="logo-fallback" id="logo-fb">BB</div>
+      <div class="header-text">
+        <div class="header-title">Asphalt QC Monitoring</div>
+        <div class="header-sub">Big Ben Ready Mix Concrete - QC Department - Asphalt Plant</div>
+        <div class="header-sub">Target: <strong>100% Pass Rate</strong> | <span id="cur-date"></span></div>
+      </div>
+    </div>
+    <div class="header-right">
+      <span id="online-indicator" class="online-badge">Online</span>
+      <select id="sel-month" class="select-input"></select>
+      <button class="btn-outline" onclick="exportCSV()">Export CSV</button>
+      <button class="btn-outline" onclick="printPage()">Print</button>
+      <button class="btn-primary" onclick="openLayingForm()">+ Log Laying</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="setTab('kpi',this)">KPI Overview</button>
+    <button class="tab" onclick="setTab('sheet1',this)">Sheet 1 - Daily Laying</button>
+    <button class="tab" onclick="setTab('sheet2',this)">Sheet 2 - Timeliness</button>
+    <button class="tab" onclick="setTab('sheet3',this)">Sheet 3 - Test Results</button>
+    <button class="tab" onclick="setTab('specs',this)">Specs</button>
+  </div>
+
+  <!-- TAB: KPI -->
+  <div id="tab-kpi" class="tab-content active">
+    <div class="overall-card" id="overall-card">
+      <div class="overall-left">
+        <div class="overall-label">Overall Monthly Pass Rate</div>
+        <div class="overall-big"><span id="overall-pct">0%</span><span class="overall-target">/ 100% target</span></div>
+        <div class="run-bar"><div class="run-fill" id="overall-bar"></div></div>
+        <div class="run-note" id="overall-note"></div>
+      </div>
+      <div class="overall-right">
+        <div class="mini-stat" id="mini-total"><div class="ms-val">0</div><div class="ms-lbl">Tests</div></div>
+        <div class="mini-stat" id="mini-pass"><div class="ms-val g">0</div><div class="ms-lbl">Passed</div></div>
+        <div class="mini-stat" id="mini-rej"><div class="ms-val r">0</div><div class="ms-lbl">Failed</div></div>
+        <div class="mini-stat" id="mini-pend"><div class="ms-val w">0</div><div class="ms-lbl">Pending</div></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
+      <!-- Timeliness KPI -->
+      <div class="card">
+        <div class="card-title">Testing Timeliness</div>
+        <div style="display:flex;gap:10px;justify-content:center;padding:10px 0">
+          <div class="mini-stat" id="tl-ontime"><div class="ms-val g">0</div><div class="ms-lbl">On Time</div></div>
+          <div class="mini-stat" id="tl-late"><div class="ms-val r">0</div><div class="ms-lbl">Late</div></div>
+          <div class="mini-stat" id="tl-pend"><div class="ms-val w">0</div><div class="ms-lbl">Pending</div></div>
+        </div>
+      </div>
+      <!-- Test Results KPI -->
+      <div class="card">
+        <div class="card-title">Test Results by Type</div>
+        <div id="test-type-kpi" style="font-size:11px;padding:8px 0"></div>
+      </div>
+    </div>
+
+    <div class="section-hd" style="margin-top:14px">Per Test Type -- Pass Rate</div>
+    <div class="gauge-grid" id="gauge-grid"></div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-title">Daily Trend -- <span id="trend-lbl"></span></div>
+      <div style="height:150px;position:relative"><canvas id="chartTrend"></canvas></div>
+    </div>
+  </div>
+
+  <!-- SHEET 1: Daily Laying -->
+  <div id="tab-sheet1" class="tab-content">
+    <div class="log-toolbar">
+      <div class="log-title">Sheet 1 - Daily Laying Record -- <span id="s1-month-lbl"></span></div>
+      <div class="log-controls">
+        <input type="text" id="s1-search" placeholder="Search project, client..." class="select-input" style="min-width:200px" oninput="renderSheet1()">
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="log-tbl">
+        <thead><tr>
+          <th>Date Laid</th><th>Client</th><th>Project</th><th>Location</th>
+          <th>Mix Type</th><th>Thickness (mm)</th><th>Area (sqm)</th>
+          <th>Tonnage</th><th>Site Coord.</th><th>Testing Coord.</th>
+          <th>Remarks</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="s1-body"></tbody>
+      </table>
+    </div>
+    <div class="log-footer" id="s1-footer"></div>
+  </div>
+
+  <!-- SHEET 2: Timeliness -->
+  <div id="tab-sheet2" class="tab-content">
+    <div class="log-toolbar">
+      <div class="log-title">Sheet 2 - Testing Timeliness -- <span id="s2-month-lbl"></span></div>
+      <div class="log-controls">
+        <select id="s2-filter-status" class="select-input" onchange="renderSheet2()">
+          <option value="">All status</option>
+          <option>On Time</option><option>Late</option><option>Pending</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="log-tbl">
+        <thead><tr>
+          <th>Date Laid</th><th>Client</th><th>Project</th><th>Mix Type</th>
+          <th>Due Date</th><th>Marshall Test</th><th>Extraction</th>
+          <th>Air Voids</th><th>Coring</th><th>Overall Timeliness</th>
+        </tr></thead>
+        <tbody id="s2-body"></tbody>
+      </table>
+    </div>
+    <div class="log-footer" id="s2-footer"></div>
+  </div>
+
+  <!-- SHEET 3: Test Results -->
+  <div id="tab-sheet3" class="tab-content">
+    <div class="log-toolbar">
+      <div class="log-title">Sheet 3 - Test Results -- <span id="s3-month-lbl"></span></div>
+      <div class="log-controls">
+        <select id="s3-filter-type" class="select-input" onchange="renderSheet3()">
+          <option value="">All test types</option>
+          <option>Marshall Test</option><option>Extraction Test</option>
+          <option>Air Voids/VMA/VFA</option><option>Coring</option>
+        </select>
+        <select id="s3-filter-status" class="select-input" onchange="renderSheet3()">
+          <option value="">All status</option>
+          <option>Passed</option><option>Failed</option><option>Pending</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="log-tbl">
+        <thead><tr>
+          <th>Date Laid</th><th>Date Tested</th><th>Client</th><th>Project</th>
+          <th>Test Type</th><th>Lab No.</th>
+          <th style="background:#8B1A1A;color:#fff">Stability (kN)</th>
+          <th style="background:#8B1A1A;color:#fff">Flow (mm)</th>
+          <th style="background:#8B1A1A;color:#fff">Air Voids (%)</th>
+          <th style="background:#8B1A1A;color:#fff">VMA (%)</th>
+          <th style="background:#8B1A1A;color:#fff">VFA (%)</th>
+          <th style="background:#8B1A1A;color:#fff">Core Thickness</th>
+          <th>Overall</th><th>Testing Coord.</th><th>Remarks</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="s3-body"></tbody>
+      </table>
+    </div>
+    <div class="log-footer" id="s3-footer"></div>
+  </div>
+
+  <!-- SPECS TAB -->
+  <div id="tab-specs" class="tab-content">
+    <div class="log-toolbar">
+      <div class="log-title">Test Specifications</div>
+      <button class="btn-primary" onclick="saveSpecs()">Save Specs</button>
+    </div>
+    <div style="padding:16px;max-width:600px">
+      <div class="section-label">Marshall Test</div>
+      <div class="spec-row"><label>Stability (kN)</label><div class="spec-input">
+        <input id="sp-stability-min" placeholder="Min" value="3.3">
+        <span style="font-size:11px;align-self:center">to</span>
+        <input id="sp-stability-max" placeholder="Max" value="8.0">
+      </div></div>
+      <div class="spec-row"><label>Flow (mm)</label><div class="spec-input">
+        <input id="sp-flow-min" placeholder="Min" value="2.0">
+        <span style="font-size:11px;align-self:center">to</span>
+        <input id="sp-flow-max" placeholder="Max" value="3.5">
+      </div></div>
+
+      <div class="section-label" style="margin-top:16px">Volumetric Properties</div>
+      <div class="spec-row"><label>Air Voids (%)</label><div class="spec-input">
+        <input id="sp-av-min" placeholder="Min" value="3.0">
+        <span style="font-size:11px;align-self:center">to</span>
+        <input id="sp-av-max" placeholder="Max" value="5.0">
+      </div></div>
+      <div class="spec-row"><label>VMA (%)</label><div class="spec-input">
+        <input id="sp-vma-min" placeholder="Min" value="13.0">
+        <span style="font-size:11px;align-self:center">to</span>
+        <input id="sp-vma-max" placeholder="Max" value="16.0">
+      </div></div>
+      <div class="spec-row"><label>VFA (%)</label><div class="spec-input">
+        <input id="sp-vfa-min" placeholder="Min" value="65.0">
+        <span style="font-size:11px;align-self:center">to</span>
+        <input id="sp-vfa-max" placeholder="Max" value="75.0">
+      </div></div>
+
+      <div class="section-label" style="margin-top:16px">Coring</div>
+      <div class="spec-row"><label>Min cores per lot</label>
+        <input id="sp-core-min" placeholder="Min" value="3" style="width:70px;font-size:11px;padding:4px 6px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:var(--surface);color:var(--text)">
+      </div>
+      <div class="spec-row"><label>Max cores per lot</label>
+        <input id="sp-core-max" placeholder="Max" value="30" style="width:70px;font-size:11px;padding:4px 6px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:var(--surface);color:var(--text)">
+      </div>
+      <div class="spec-row"><label>Timeliness (days)</label>
+        <div class="spec-input">
+          <input id="sp-days-ontime" placeholder="On Time" value="3" style="width:70px;font-size:11px;padding:4px 6px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:var(--surface);color:var(--text)">
+          <span style="font-size:11px;align-self:center">days = On Time, 4+ = Late</span>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;font-size:11px;color:var(--text-2);padding:10px;background:var(--surface-2);border-radius:var(--radius)">
+        <strong>Note:</strong> These are DPWH standard values. For projects with Special Provisions, update these specs accordingly. Changes apply to new entries only.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- MODAL: Log Laying -->
+<div class="modal-overlay" id="laying-modal" onclick="if(event.target===this)closeLayingModal()">
+  <div class="modal" style="width:min(660px,98%)">
+    <div class="modal-title" id="laying-modal-title">Log New Laying</div>
+    <div class="section-label">Daily Laying Information</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Date Laid <span class="req">*</span></label><input type="date" id="l-date"></div>
+      <div class="form-group"><label>Client <span class="req">*</span></label><input type="text" id="l-client" list="ac-client" autocomplete="off" placeholder="e.g. DPWH Region III"></div>
+      <div class="form-group"><label>Project <span class="req">*</span></label><input type="text" id="l-project" list="ac-project" autocomplete="off" placeholder="e.g. Road Widening"></div>
+      <div class="form-group"><label>Location</label><input type="text" id="l-location" list="ac-location" autocomplete="off" placeholder="e.g. Sta. 0+000 to 1+000"></div>
+      <div class="form-group"><label>Mix Type</label>
+        <select id="l-mixtype">
+          <option value="">-- Select --</option>
+          <option>BCBC (Bituminous Concrete Base Course)</option>
+          <option>BCWC (Bituminous Concrete Wearing Course)</option>
+          <option>Overlay</option>
+          <option value="__other__">Other (specify)</option>
+        </select>
+      </div>
+      <div class="form-group" id="mixtype-other-wrap" style="display:none">
+        <label>Specify Mix Type</label>
+        <input type="text" id="l-mixtype-other" placeholder="Enter mix type">
+      </div>
+      <div class="form-group"><label>Design Thickness (mm)</label><input type="number" id="l-thickness" placeholder="e.g. 50" step="1"></div>
+      <div class="form-group"><label>Area Laid (sqm)</label><input type="number" id="l-area" placeholder="e.g. 500" step="0.1"></div>
+      <div class="form-group"><label>Tonnage</label><input type="number" id="l-tonnage" placeholder="e.g. 120" step="0.1"></div>
+      <div class="form-group"><label>Site Coordinator</label><input type="text" id="l-sitecoord" list="ac-sitecoord" autocomplete="off" placeholder="e.g. Russel D."></div>
+      <div class="form-group"><label>Testing Coordinator</label>
+        <select id="l-testcoord">
+          <option value="">-- Select --</option>
+          <option>Dio Balili</option><option>Joshua Facun</option>
+          <option>Roni Aguilar</option><option>JM Buitizon</option>
+          <option>Teodoro Taysa</option>
+          <option value="__other__">Other (specify)</option>
+        </select>
+      </div>
+      <div class="form-group" id="testcoord-other-wrap" style="display:none">
+        <label>Specify Coordinator</label>
+        <input type="text" id="l-testcoord-other" placeholder="Enter name">
+      </div>
+      <div class="form-group" style="grid-column:span 2"><label>Remarks</label>
+        <input type="text" id="l-remarks" placeholder="Optional remarks" style="width:100%">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn-danger-sm" id="laying-delete-btn" onclick="deleteLaying()" style="display:none">Delete</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-secondary" onclick="closeLayingModal()">Cancel</button>
+        <button class="btn-primary" id="laying-save-btn" onclick="saveLaying()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Log Test Result -->
+<div class="modal-overlay" id="test-modal" onclick="if(event.target===this)closeTestModal()">
+  <div class="modal" style="width:min(640px,98%)">
+    <div class="modal-title">Log Test Result</div>
+    <div id="test-laying-info" style="font-size:11px;color:var(--text-2);margin-bottom:12px;padding:8px 10px;background:var(--surface-2);border-radius:var(--radius)"></div>
+
+    <div class="form-grid">
+      <div class="form-group"><label>Test Type <span class="req">*</span></label>
+        <select id="t-type" onchange="toggleTestFields()">
+          <option value="">-- Select --</option>
+          <option>Marshall Test</option>
+          <option>Extraction Test</option>
+          <option>Air Voids/VMA/VFA</option>
+          <option>Coring</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Date Tested <span class="req">*</span></label>
+        <input type="date" id="t-date" onchange="computeTimeliness()">
+      </div>
+      <div class="form-group"><label>Lab No.</label>
+        <input type="text" id="t-labno" list="ac-labno" autocomplete="off" placeholder="e.g. TL-BUL-26-001">
+      </div>
+    </div>
+
+    <!-- Marshall Test Fields -->
+    <div id="marshall-fields" style="display:none">
+      <div class="section-label">Marshall Test Results</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Stability (kN) <span style="font-size:9px;color:var(--text-2)" id="stability-req"></span></label>
+          <input type="number" id="t-stability" placeholder="e.g. 5.2" step="0.01" oninput="computeTestResult()">
+        </div>
+        <div class="form-group"><label>Flow (mm) <span style="font-size:9px;color:var(--text-2)" id="flow-req"></span></label>
+          <input type="number" id="t-flow" placeholder="e.g. 2.8" step="0.01" oninput="computeTestResult()">
+        </div>
+      </div>
+    </div>
+
+    <!-- Air Voids/VMA/VFA Fields -->
+    <div id="volumetric-fields" style="display:none">
+      <div class="section-label">Volumetric Properties</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Air Voids (%) <span style="font-size:9px;color:var(--text-2)" id="av-req"></span></label>
+          <input type="number" id="t-airvoids" placeholder="e.g. 4.2" step="0.01" oninput="computeTestResult()">
+        </div>
+        <div class="form-group"><label>VMA (%) <span style="font-size:9px;color:var(--text-2)" id="vma-req"></span></label>
+          <input type="number" id="t-vma" placeholder="e.g. 14.5" step="0.01" oninput="computeTestResult()">
+        </div>
+        <div class="form-group"><label>VFA (%) <span style="font-size:9px;color:var(--text-2)" id="vfa-req"></span></label>
+          <input type="number" id="t-vfa" placeholder="e.g. 70.0" step="0.01" oninput="computeTestResult()">
+        </div>
+      </div>
+    </div>
+
+    <!-- Coring Fields -->
+    <div id="coring-fields" style="display:none">
+      <div class="section-label">Coring Results</div>
+      <div class="form-group">
+        <label>No. of Cores <span class="req">*</span> <span style="font-size:9px;color:var(--text-2)" id="core-count-req"></span></label>
+        <input type="number" id="t-corecount" placeholder="e.g. 5" min="1" max="30" oninput="buildCoreInputs()">
+      </div>
+      <div id="core-inputs" style="margin:8px 0"></div>
+      <div class="form-group">
+        <label>Average Thickness (mm) <span style="font-size:9px;color:var(--text-2)">(auto)</span></label>
+        <input type="text" id="t-coreavg" readonly style="background:var(--surface-2)">
+      </div>
+    </div>
+
+    <!-- Extraction Test Fields -->
+    <div id="extraction-fields" style="display:none">
+      <div class="section-label">Extraction Test Results</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Bitumen Content (%)</label>
+          <input type="number" id="t-bitumen" placeholder="e.g. 5.5" step="0.01" oninput="computeTestResult()">
+        </div>
+        <div class="form-group"><label>Target (%)</label>
+          <input type="number" id="t-bitumentarget" placeholder="e.g. 5.5" step="0.01">
+        </div>
+      </div>
+    </div>
+
+    <div class="form-grid" style="margin-top:8px">
+      <div class="form-group">
+        <label>Timeliness <span style="font-size:9px;color:var(--text-2)">(auto)</span></label>
+        <input type="text" id="t-timeliness" readonly style="background:var(--surface-2);font-weight:600">
+      </div>
+      <div class="form-group">
+        <label>Overall Result <span style="font-size:9px;color:var(--text-2)">(auto)</span></label>
+        <input type="text" id="t-result" readonly style="background:var(--surface-2);font-weight:700;font-size:13px">
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-bottom:10px">
+      <label>Remarks</label>
+      <input type="text" id="t-remarks" placeholder="Optional remarks" style="width:100%">
+    </div>
+
+    <div class="form-actions">
+      <button class="btn-secondary" onclick="closeTestModal()">Cancel</button>
+      <button class="btn-primary" id="test-save-btn" onclick="saveTestResult()">Save Result</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">
+  <span class="toast-dot" id="toast-dot"></span>
+  <span id="toast-msg"></span>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
